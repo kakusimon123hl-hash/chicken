@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AI Voice Assistant</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React & ReactDOM -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  
+  <!-- Babel for JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <style>
+    .animate-fade { animation: fadeIn 0.4s ease-out; }
+    .animate-slide-up { animation: slideUp 0.3s ease-out; }
+    .animate-scale-in { animation: scaleIn 0.2s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes scaleIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+    
+    /* 隐藏滚动条但保留滚动功能 */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="bg-slate-950 text-white font-sans antialiased overflow-hidden selection:bg-teal-500/30">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+    const { createRoot } = ReactDOM;
+
+    // --- Hardcoded Keys & Endpoints ---
+    const DEEPSEEK_API_KEY = "sk-trzkhxflazgegemorowwscodqnzcdzbtnhujpacxxicwwchn";
+    const DEEPSEEK_API_URL = "https://api.siliconflow.cn/v1/chat/completions";
+
+    // --- Components ---
+    const Icon = ({ name, size = 18, className = "", onClick }) => {
+      const ref = useRef(null);
+      useEffect(() => {
+        if (!window.lucide || !ref.current) return;
+        const i = document.createElement('i');
+        i.setAttribute('data-lucide', name);
+        ref.current.innerHTML = '';
+        ref.current.appendChild(i);
+        window.lucide.createIcons({ root: ref.current, nameAttr: 'data-lucide', attrs: { width: size, height: size, class: className } });
+      }, [name, size, className]);
+      return <span ref={ref} onClick={onClick} style={{ display: 'inline-flex', verticalAlign: 'middle', cursor: onClick ? 'pointer' : 'default' }} />;
+    };
+
+    const App = () => {
+      // --- App State ---
+      const [appState, setAppState] = useState('IDLE'); // 'IDLE' | 'WAKE_WORD' | 'COMMAND' | 'PROCESSING' | 'SPEAKING'
+      const [transcript, setTranscript] = useState('');
+      const [chatHistory, setChatHistory] = useState([]);
+      const [systemMessage, setSystemMessage] = useState('Ready to start / 准备就绪');
+      const [showSettings, setShowSettings] = useState(false);
+      const [availableVoices, setAvailableVoices] = useState([]);
+
+      // --- Settings State ---
+      const [settings, setSettings] = useState(() => {
+        const saved = localStorage.getItem('voice_app_settings');
+        return saved ? JSON.parse(saved) : {
+          model: 'deepseek', // 'deepseek' or 'gemini'
+          geminiKey: '',
+          language: 'zh-CN', // 'zh-CN' or 'zh-HK'
+          voiceURI: '',      // 特定发音人
+          esp32Ip: '192.168.1.100',
+          autoSleep: true
+        };
+      });
+
+      // --- Refs ---
+      const recognitionRef = useRef(null);
+      const isRecognizingRef = useRef(false); // Track internal state to prevent 'already started' errors
+      const silenceTimerRef = useRef(null);
+      const autoSleepTimerRef = useRef(null);
+      const appStateRef = useRef(appState);
+      const settingsRef = useRef(settings);
+      const synth = window.speechSynthesis;
+      const chatEndRef = useRef(null);
+
+      // --- Sync Refs ---
+      useEffect(() => { appStateRef.current = appState; }, [appState]);
+      useEffect(() => { 
+        settingsRef.current = settings; 
+        localStorage.setItem('voice_app_settings', JSON.stringify(settings));
+        
+        // Restart recognition if language changes
+        if (recognitionRef.current && appState !== 'IDLE') {
+          recognitionRef.current.lang = settings.language;
+          if (isRecognizingRef.current) {
+            try { recognitionRef.current.stop(); } catch(e) {}
+          }
+        }
+      }, [settings]);
+
+      // Scroll to bottom of chat
+      useEffect(() => {
+        if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      }, [chatHistory]);
+
+      // --- Pre-load and Filter Voices ---
+      useEffect(() => {
+        const loadVoices = () => {
+          if (!window.speechSynthesis) return;
+          const allVoices = window.speechSynthesis.getVoices();
+          
+          const targetLang = settings.language.toLowerCase();
+          const filtered = allVoices.filter(v => 
+            v.lang.toLowerCase().includes(targetLang) || 
+            (targetLang === 'zh-hk' && v.lang.toLowerCase().includes('yue')) ||
+            (targetLang === 'zh-cn' && v.lang.toLowerCase() === 'zh')
+          );
+          
+          setAvailableVoices(filtered);
+          
+          // 如果没有选中的语音，或者选中的语音不在当前语言列表中，自动重置为列表第一个
+          if (filtered.length > 0) {
+            if (!settingsRef.current.voiceURI || !filtered.find(v => v.voiceURI === settingsRef.current.voiceURI)) {
+              setSettings(prev => ({ ...prev, voiceURI: filtered[0].voiceURI }));
+            }
+          } else {
+            setSettings(prev => ({ ...prev, voiceURI: '' }));
+          }
+        };
+
+        if (window.speechSynthesis) {
+          loadVoices();
+          window.speechSynthesis.onvoiceschanged = loadVoices;
+        }
+      }, [settings.language]); // 当语言改变时，重新过滤可用的发音人
+
+      // --- Speech Recognition Setup ---
+      useEffect(() => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          setSystemMessage('Error: Browser does not support Speech Recognition (Use Chrome/Safari).');
+          return;
+        }
+
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+
+        recognition.onstart = () => {
+          isRecognizingRef.current = true;
+          console.log('Mic started. Lang:', settingsRef.current.language);
+        };
+
+        recognition.onresult = (event) => {
+          let currentTranscript = '';
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            currentTranscript += event.results[i][0].transcript;
+          }
+          
+          setTranscript(currentTranscript);
+          const lowerTranscript = currentTranscript.toLowerCase();
+
+          // STATE: WAKE_WORD
+          if (appStateRef.current === 'WAKE_WORD') {
+            const isCantonese = settingsRef.current.language === 'zh-HK';
+            const isWaked = isCantonese 
+              ? (lowerTranscript.includes('小豬') || lowerTranscript.includes('小猪') || lowerTranscript.includes('小珠') || lowerTranscript.includes('小朱'))
+              : (lowerTranscript.includes('小g') || lowerTranscript.includes('小鸡') || lowerTranscript.includes('小基') || lowerTranscript.includes('小知'));
+            
+            if (isWaked) handleWakeUp();
+          } 
+          // STATE: COMMAND
+          else if (appStateRef.current === 'COMMAND') {
+            clearTimeout(silenceTimerRef.current);
+            clearTimeout(autoSleepTimerRef.current);
+            
+            // 3 seconds silence to submit
+            silenceTimerRef.current = setTimeout(() => {
+              if (currentTranscript.trim().length > 0) {
+                handleUserCommandFinished(currentTranscript.trim());
+              } else {
+                if (settingsRef.current.autoSleep) {
+                  autoSleepTimerRef.current = setTimeout(() => {
+                    if (appStateRef.current === 'COMMAND') {
+                      setAppState('WAKE_WORD');
+                      setSystemMessage(`Auto Sleep / 已自动休眠... (叫"${settingsRef.current.language === 'zh-HK' ? '小豬' : '小G'}"唤醒)`);
+                    }
+                  }, 10000);
+                }
+              }
+            }, 3000);
+          }
+        };
+
+        recognition.onerror = (event) => {
+          // Ignore the 'no-speech' error to prevent console spam and InvalidStateError
+          if (event.error === 'no-speech') {
+            return;
+          }
+          
+          console.error('Speech recognition error', event.error);
+          if (event.error === 'not-allowed') {
+            setAppState('IDLE');
+            setSystemMessage('Microphone access denied / 麦克风权限被拒绝');
+          }
+        };
+
+        recognition.onend = () => {
+          isRecognizingRef.current = false;
+          if (appStateRef.current === 'WAKE_WORD' || appStateRef.current === 'COMMAND') {
+            recognition.lang = settingsRef.current.language; 
+            if (!isRecognizingRef.current) {
+              try { recognition.start(); } catch (e) { console.error("Restart error:", e); }
+            }
+          }
+        };
+
+        recognitionRef.current = recognition;
+
+        return () => {
+          if (recognitionRef.current) {
+            isRecognizingRef.current = false;
+            try { recognitionRef.current.stop(); } catch(e){}
+          }
+          clearTimeout(silenceTimerRef.current);
+          clearTimeout(autoSleepTimerRef.current);
+        };
+      }, []);
+
+      // Toggle mic based on appState
+      useEffect(() => {
+        if (appState === 'WAKE_WORD' || appState === 'COMMAND') {
+          if (recognitionRef.current) {
+            recognitionRef.current.lang = settingsRef.current.language;
+            if (!isRecognizingRef.current) {
+              try { recognitionRef.current.start(); } catch(e){}
+            }
+          }
+        } else {
+          if (recognitionRef.current && isRecognizingRef.current) {
+            try { recognitionRef.current.stop(); } catch(e){}
+          }
+        }
+      }, [appState]);
+
+      // --- Logic Handlers ---
+      const handleWakeUp = () => {
+        setAppState('SPEAKING'); 
+        setTranscript('');
+        setSystemMessage('Wake Word Detected / 已唤醒');
+        
+        const replyText = settingsRef.current.language === 'zh-HK' ? '我喺度，請講。' : '我在，请说。';
+        speakText(replyText, () => {
+          setAppState('COMMAND');
+          setSystemMessage('Listening for your question... / 正在倾听您的问题...');
+          
+          clearTimeout(autoSleepTimerRef.current);
+          if (settingsRef.current.autoSleep) {
+            autoSleepTimerRef.current = setTimeout(() => {
+              if (appStateRef.current === 'COMMAND') {
+                setAppState('WAKE_WORD');
+                setSystemMessage(`Auto Sleep / 已自动休眠... (叫"${settingsRef.current.language === 'zh-HK' ? '小豬' : '小G'}"唤醒)`);
+              }
+            }, 10000);
+          }
+        });
+      };
+
+      const sendESP32Command = async (action) => {
+        try {
+          await fetch(`http://${settingsRef.current.esp32Ip}/led/${action}`, { method: 'GET', mode: 'no-cors' });
+          console.log(`Sent command '${action}' to ESP32 at ${settingsRef.current.esp32Ip}`);
+        } catch (error) {
+          console.error("Failed to reach ESP32:", error);
+        }
+      };
+
+      const resumeListening = () => {
+        setAppState('COMMAND');
+        setTranscript('');
+        setSystemMessage('Listening... / 正在倾听... (您可以直接回复)');
+        
+        clearTimeout(silenceTimerRef.current);
+        clearTimeout(autoSleepTimerRef.current);
+        
+        if (settingsRef.current.autoSleep) {
+          autoSleepTimerRef.current = setTimeout(() => {
+            if (appStateRef.current === 'COMMAND') {
+              setAppState('WAKE_WORD');
+              setSystemMessage(`Auto Sleep / 已自动休眠... (叫"${settingsRef.current.language === 'zh-HK' ? '小豬' : '小G'}"唤醒)`);
+            }
+          }, 10000);
+        }
+      };
+
+      const handleUserCommandFinished = async (userText) => {
+        setAppState('PROCESSING');
+        addMessage('user', userText);
+        
+        // Smart Home Interceptor
+        if (userText.includes('关灯') || userText.includes('關燈')) {
+          setSystemMessage('Controlling ESP32... / 正在控制ESP32...');
+          await sendESP32Command('off'); 
+          const reply = settingsRef.current.language === 'zh-HK' ? '好嘅，已經幫你關燈。' : '好的，已经为您关灯。';
+          setAppState('SPEAKING');
+          addMessage('assistant', reply);
+          speakText(reply, resumeListening);
+          return; 
+        }
+
+        if (userText.includes('开灯') || userText.includes('開燈')) {
+          setSystemMessage('Controlling ESP32... / 正在控制ESP32...');
+          await sendESP32Command('on'); 
+          const reply = settingsRef.current.language === 'zh-HK' ? '冇問題，燈已經打開。' : '没问题，灯已经打开。';
+          setAppState('SPEAKING');
+          addMessage('assistant', reply);
+          speakText(reply, resumeListening);
+          return; 
+        }
+
+        setSystemMessage(`Thinking (${settingsRef.current.model})... / 思考中...`);
+        const responseText = await callAI(userText);
+        
+        setAppState('SPEAKING');
+        setSystemMessage('Speaking... / 说话中...');
+        addMessage('assistant', responseText);
+        
+        speakText(responseText, resumeListening);
+      };
+
+      const callAI = async (text) => {
+        const langInstruction = settingsRef.current.language === 'zh-HK' ? '粤语' : '普通话';
+        const botName = settingsRef.current.language === 'zh-HK' ? '小豬' : '小G';
+        const systemPrompt = `你是一个名叫'${botName}'的智能语音助手。请像一个真实的人类朋友一样用简短、口语化、亲切的${langInstruction}回答。回答尽量控制在两三句话以内。为了让聊天不断继续，你可以在回答的最后适当反问或者引导用户继续这个话题。`;
+
+        try {
+          if (settingsRef.current.model === 'deepseek') {
+            // DEEPSEEK API CALL
+            const messages = [
+              { role: "system", content: systemPrompt },
+              ...chatHistory.map(msg => ({ role: msg.role === 'assistant' ? 'assistant' : 'user', content: msg.text })),
+              { role: "user", content: text }
+            ];
+
+            const res = await fetch(DEEPSEEK_API_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
+              body: JSON.stringify({ model: "deepseek-ai/DeepSeek-V3", messages, stream: false })
+            });
+            const data = await res.json();
+            if(!data.choices) throw new Error("DeepSeek Response Error");
+            return data.choices[0].message.content;
+
+          } else {
+            // GEMINI API CALL
+            if (!settingsRef.current.geminiKey) return "请在右上角设置中配置 Gemini API Key。";
+            
+            const contents = chatHistory.map(msg => ({
+              role: msg.role === 'assistant' ? 'model' : 'user',
+              parts: [{ text: msg.text }]
+            }));
+            contents.push({ role: 'user', parts: [{ text }] });
+
+            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${settingsRef.current.geminiKey}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents,
+                systemInstruction: { parts: [{ text: systemPrompt }] }
+              })
+            });
+            const data = await res.json();
+            if(!data.candidates) throw new Error("Gemini Response Error");
+            return data.candidates[0].content.parts[0].text;
+          }
+        } catch (error) {
+          console.error("API Error:", error);
+          return settingsRef.current.language === 'zh-HK' ? "抱歉，我個大腦好似暫時連唔上網。" : "抱歉，我的大脑好像暂时连不上网了。";
+        }
+      };
+
+      const speakText = (text, onEndCallback) => {
+        if (synth.speaking) synth.cancel();
+        
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = settingsRef.current.language; 
+        
+        // 如果用户选择了特定的语音引擎，则应用它
+        if (settingsRef.current.voiceURI) {
+          const allVoices = synth.getVoices();
+          const selectedVoice = allVoices.find(v => v.voiceURI === settingsRef.current.voiceURI);
+          if (selectedVoice) {
+            utterance.voice = selectedVoice;
+          }
+        }
+        
+        utterance.onend = () => { if (onEndCallback) onEndCallback(); };
+        utterance.onerror = (e) => {
+          console.error("TTS Error:", e);
+          if (onEndCallback) onEndCallback();
+        };
+
+        synth.speak(utterance);
+      };
+
+      const toggleSystem = () => {
+        if (appState === 'IDLE') {
+          setAppState('WAKE_WORD');
+          setSystemMessage(`Background Listening / 后台监听中... (叫"${settings.language === 'zh-HK' ? '小豬' : '小G'}"唤醒)`);
+        } else {
+          setAppState('IDLE');
+          setSystemMessage('System Offline / 系统已关闭');
+          synth.cancel();
+          setTranscript('');
+          clearTimeout(autoSleepTimerRef.current);
+          clearTimeout(silenceTimerRef.current);
+        }
+      };
+
+      const addMessage = (role, text) => {
+        setChatHistory(prev => [...prev, { role, text, time: new Date().toLocaleTimeString() }]);
+      };
+
+      const updateSetting = (key, value) => {
+        setSettings(prev => ({ ...prev, [key]: value }));
+      };
+
+      // --- UI Helpers ---
+      const getStateColor = () => {
+        switch(appState) {
+          case 'WAKE_WORD': return 'bg-blue-500';
+          case 'COMMAND': return 'bg-emerald-500';
+          case 'PROCESSING': return 'bg-purple-500';
+          case 'SPEAKING': return 'bg-orange-500';
+          default: return 'bg-slate-700';
+        }
+      };
+
+      const getStateIcon = () => {
+        switch(appState) {
+          case 'WAKE_WORD': return <Icon name="mic" size={48} className="text-white" />;
+          case 'COMMAND': return <Icon name="activity" size={48} className="text-white animate-bounce" />;
+          case 'PROCESSING': return <Icon name="loader-2" size={48} className="text-white animate-spin" />;
+          case 'SPEAKING': return <Icon name="volume-2" size={48} className="text-white animate-pulse" />;
+          default: return <Icon name="mic-off" size={48} className="text-slate-400" />;
+        }
+      };
+
+      return (
+        <div className="h-screen w-full flex flex-col items-center relative font-sans">
+          
+          {/* Top Navbar */}
+          <div className="w-full flex justify-between items-center p-6 max-w-2xl mx-auto">
+            <div>
+              <h1 className="text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-teal-400 to-emerald-400 tracking-tight">
+                Soul Mate <span className="text-slate-100 font-light">Voice</span>
+              </h1>
+              <p className="text-slate-500 text-xs mt-1">
+                {settings.model === 'deepseek' ? 'DeepSeek V3 (Built-in)' : 'Gemini 3 Flash Preview'}
+              </p>
+            </div>
+            
+            {/* Gear Button */}
+            <button 
+              onClick={() => setShowSettings(true)}
+              className="p-3 bg-slate-900 rounded-full hover:bg-slate-800 border border-slate-800 transition-all text-slate-300 hover:text-teal-400"
+            >
+              <Icon name="settings" size={20} />
+            </button>
+          </div>
+
+          {/* Main Content Area */}
+          <div className="flex-1 w-full max-w-md flex flex-col p-4 overflow-hidden relative">
+            
+            {/* Status Banner */}
+            <div className={`w-full py-3 px-4 rounded-2xl text-center font-medium transition-colors border shadow-lg mb-8
+              ${appState === 'WAKE_WORD' ? 'bg-blue-900/20 text-blue-400 border-blue-500/20' : ''}
+              ${appState === 'COMMAND' ? 'bg-emerald-900/20 text-emerald-400 border-emerald-500/20' : ''}
+              ${appState === 'PROCESSING' ? 'bg-purple-900/20 text-purple-400 border-purple-500/20' : ''}
+              ${appState === 'SPEAKING' ? 'bg-orange-900/20 text-orange-400 border-orange-500/20' : ''}
+              ${appState === 'IDLE' ? 'bg-slate-900 text-slate-400 border-slate-800' : ''}
+            `}>
+              {systemMessage}
+            </div>
+
+            {/* Main Orb / Visualizer */}
+            <div className="relative flex justify-center items-center h-48 mb-8 flex-shrink-0">
+              {appState !== 'IDLE' && (
+                <div className={`absolute w-40 h-40 rounded-full ${getStateColor()} opacity-20 animate-ping`}></div>
+              )}
+              {(appState === 'COMMAND' || appState === 'SPEAKING') && (
+                 <div className={`absolute w-32 h-32 rounded-full ${getStateColor()} opacity-30 animate-pulse delay-75`}></div>
+              )}
+              
+              <button 
+                onClick={toggleSystem}
+                className={`relative z-10 w-28 h-28 rounded-full flex flex-col items-center justify-center transition-all duration-300 shadow-2xl hover:scale-105 ${getStateColor()} ${appState !== 'IDLE' ? 'shadow-[0_0_30px_rgba(0,0,0,0.5)]' : ''}`}
+                style={{ boxShadow: appState !== 'IDLE' ? `0 0 40px var(--tw-shadow-color)` : '' }}
+              >
+                {getStateIcon()}
+              </button>
+            </div>
+
+            {/* Live Transcript */}
+            <div className="w-full transition-opacity duration-300 mb-4" style={{ opacity: (appState === 'COMMAND' || appState === 'WAKE_WORD') ? 1 : 0.2 }}>
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 min-h-[60px] text-slate-300 flex items-center justify-center italic text-center text-sm shadow-inner">
+                {transcript || (appState === 'WAKE_WORD' ? `等待唤醒词: ${settings.language === 'zh-HK' ? '小豬' : '小G'}` : "...")}
+              </div>
+            </div>
+
+            {/* Chat History */}
+            <div className="w-full flex-1 bg-slate-900/50 border border-slate-800 rounded-3xl overflow-hidden flex flex-col">
+              <div className="bg-slate-900/80 p-3 border-b border-slate-800 flex items-center gap-2 backdrop-blur-md">
+                <Icon name="message-square" size={16} className="text-teal-500"/>
+                <span className="font-bold text-xs tracking-wider uppercase text-slate-400">Interaction History</span>
+              </div>
+              <div className="p-4 flex-1 overflow-y-auto space-y-4 no-scrollbar">
+                {chatHistory.length === 0 ? (
+                  <div className="text-center text-slate-600 text-sm mt-4">Start the system to begin conversation.</div>
+                ) : (
+                  chatHistory.map((msg, idx) => (
+                    <div key={idx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} animate-fade`}>
+                      <span className="text-[10px] text-slate-500 mb-1 px-1">{msg.time} {msg.role === 'user' ? 'You' : (settings.language === 'zh-HK' ? '小豬' : '小G')}</span>
+                      <div className={`px-4 py-2.5 rounded-2xl max-w-[85%] text-sm leading-relaxed shadow-sm ${
+                        msg.role === 'user' 
+                          ? 'bg-teal-600 text-white rounded-tr-sm' 
+                          : 'bg-slate-800 text-slate-200 rounded-tl-sm border border-slate-700'
+                      }`}>
+                        {msg.text}
+                      </div>
+                    </div>
+                  ))
+                )}
+                <div ref={chatEndRef} />
+              </div>
+            </div>
+          </div>
+
+          {/* --- Settings Modal --- */}
+          {showSettings && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade">
+              <div className="bg-slate-900 border border-slate-800 rounded-[2rem] shadow-2xl w-full max-w-md p-6 animate-scale-in">
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    <Icon name="settings" size={20} className="text-teal-400" /> 系统设置
+                  </h2>
+                  <button onClick={() => setShowSettings(false)} className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 text-slate-400">
+                    <Icon name="x" size={18}/>
+                  </button>
+                </div>
+                
+                <div className="space-y-4 max-h-[70vh] overflow-y-auto no-scrollbar pb-4">
+                  
+                  {/* AI Model Selection */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider pl-1">AI Engine / 核心引擎</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button 
+                        onClick={() => updateSetting('model', 'deepseek')}
+                        className={`py-3 px-4 rounded-xl text-sm font-bold transition-all border ${settings.model === 'deepseek' ? 'bg-teal-900/40 border-teal-500 text-teal-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
+                      >
+                        DeepSeek V3
+                        <span className="block text-[10px] font-normal opacity-70 mt-1">内置免费 Key</span>
+                      </button>
+                      <button 
+                        onClick={() => updateSetting('model', 'gemini')}
+                        className={`py-3 px-4 rounded-xl text-sm font-bold transition-all border ${settings.model === 'gemini' ? 'bg-blue-900/40 border-blue-500 text-blue-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
+                      >
+                        Gemini 3 Flash
+                        <span className="block text-[10px] font-normal opacity-70 mt-1">需自行提供 Key</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Gemini API Key Input (only show if Gemini is selected) */}
+                  {settings.model === 'gemini' && (
+                    <div className="space-y-2 animate-fade">
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider pl-1">Gemini API Key</label>
+                      <input 
+                        type="password" 
+                        value={settings.geminiKey}
+                        onChange={(e) => updateSetting('geminiKey', e.target.value)}
+                        placeholder="AIzaSy..."
+                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  )}
+
+                  <hr className="border-slate-800" />
+
+                  {/* Language Selection */}
+                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3 text-slate-300">
+                      <div className="p-2 bg-slate-800 rounded-lg text-indigo-400"><Icon name="globe" size={18} /></div>
+                      <div>
+                        <div className="text-sm font-bold text-white">Language / 语言</div>
+                        <div className="text-[10px] text-slate-500">影响唤醒词与发音引擎</div>
+                      </div>
+                    </div>
+                    <select 
+                      value={settings.language}
+                      onChange={(e) => updateSetting('language', e.target.value)}
+                      className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-teal-500 cursor-pointer"
+                    >
+                      <option value="zh-CN">普通话</option>
+                      <option value="zh-HK">粤语 (Cantonese)</option>
+                    </select>
+                  </div>
+
+                  {/* Voice Selection */}
+                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3 text-slate-300">
+                      <div className="p-2 bg-slate-800 rounded-lg text-pink-400"><Icon name="mic" size={18} /></div>
+                      <div>
+                        <div className="text-sm font-bold text-white">Voice / 声音引擎</div>
+                        <div className="text-[10px] text-slate-500">{availableVoices.length > 0 ? `已找到 ${availableVoices.length} 个声音` : '加载中...'}</div>
+                      </div>
+                    </div>
+                    <select 
+                      value={settings.voiceURI || ''}
+                      onChange={(e) => updateSetting('voiceURI', e.target.value)}
+                      className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-pink-500 cursor-pointer max-w-[130px] truncate"
+                    >
+                      {availableVoices.map(v => (
+                        <option key={v.voiceURI} value={v.voiceURI}>{v.name}</option>
+                      ))}
+                      {availableVoices.length === 0 && <option value="">系统默认</option>}
+                    </select>
+                  </div>
+
+                  {/* ESP32 IP Configuration */}
+                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3 text-slate-300">
+                      <div className="p-2 bg-slate-800 rounded-lg text-emerald-400"><Icon name="wifi" size={18} /></div>
+                      <div>
+                        <div className="text-sm font-bold text-white">ESP32 Device IP</div>
+                        <div className="text-[10px] text-slate-500">用于“开灯/关灯”指令</div>
+                      </div>
+                    </div>
+                    <input 
+                      type="text" 
+                      value={settings.esp32Ip}
+                      onChange={(e) => updateSetting('esp32Ip', e.target.value)}
+                      className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white w-32 focus:outline-none focus:border-emerald-500 text-center"
+                      placeholder="192.168.x.x"
+                    />
+                  </div>
+
+                  {/* Auto-Sleep Toggle */}
+                  <button 
+                    onClick={() => updateSetting('autoSleep', !settings.autoSleep)}
+                    className="w-full bg-slate-800/50 border border-slate-700/50 rounded-2xl p-4 flex items-center justify-between hover:bg-slate-800 transition-colors"
+                  >
+                    <div className="flex items-center gap-3 text-slate-300">
+                      <div className="p-2 bg-slate-800 rounded-lg text-amber-400"><Icon name="moon" size={18} /></div>
+                      <div className="text-left">
+                        <div className="text-sm font-bold text-white">Auto-Sleep / 自动休眠</div>
+                        <div className="text-[10px] text-slate-500">10秒无声自动进入待唤醒状态</div>
+                      </div>
+                    </div>
+                    <div className={`w-10 h-6 rounded-full relative transition-colors ${settings.autoSleep ? 'bg-teal-500' : 'bg-slate-700'}`}>
+                      <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${settings.autoSleep ? 'translate-x-4' : 'translate-x-0'}`}></div>
+                    </div>
+                  </button>
+
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
