@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>AI Voice Assistant</title>
   <script src="https://cdn.tailwindcss.com"></script>
   
@@ -450,33 +450,37 @@
       };
 
       return (
-        <div className="h-screen w-full flex flex-col items-center relative font-sans">
+        // 使用 h-[100dvh] 兼容移动端的动态视口高度
+        <div className="h-[100dvh] w-full flex flex-col items-center relative font-sans">
           
-          {/* Top Navbar */}
-          <div className="w-full flex justify-between items-center p-6 max-w-2xl mx-auto">
-            <div>
-              <h1 className="text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-teal-400 to-emerald-400 tracking-tight">
+          {/* Top Navbar - 增加了 iOS SafeArea 填充 (pt-safe) 和防挤压设计 */}
+          <div 
+            className="w-full flex justify-between items-center px-5 pb-3 sm:px-6 sm:pb-6 max-w-2xl mx-auto shrink-0"
+            style={{ paddingTop: 'max(1.5rem, env(safe-area-inset-top))' }}
+          >
+            <div className="min-w-0 pr-4"> {/* min-w-0 防止 flex 子元素撑破容器 */}
+              <h1 className="text-xl sm:text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-teal-400 to-emerald-400 tracking-tight truncate">
                 Soul Mate <span className="text-slate-100 font-light">Voice</span>
               </h1>
-              <p className="text-slate-500 text-xs mt-1">
+              <p className="text-slate-500 text-[10px] sm:text-xs mt-1 truncate">
                 {settings.model === 'deepseek' ? 'DeepSeek V3 (Built-in)' : 'Gemini 3 Flash Preview'}
               </p>
             </div>
             
-            {/* Gear Button */}
+            {/* Gear Button - 固定大小不被挤压 */}
             <button 
               onClick={() => setShowSettings(true)}
-              className="p-3 bg-slate-900 rounded-full hover:bg-slate-800 border border-slate-800 transition-all text-slate-300 hover:text-teal-400"
+              className="shrink-0 p-2.5 sm:p-3 bg-slate-900 rounded-full hover:bg-slate-800 border border-slate-800 transition-all text-slate-300 hover:text-teal-400"
             >
               <Icon name="settings" size={20} />
             </button>
           </div>
 
           {/* Main Content Area */}
-          <div className="flex-1 w-full max-w-md flex flex-col p-4 overflow-hidden relative">
+          <div className="flex-1 w-full max-w-md flex flex-col px-4 pb-4 overflow-hidden relative">
             
             {/* Status Banner */}
-            <div className={`w-full py-3 px-4 rounded-2xl text-center font-medium transition-colors border shadow-lg mb-8
+            <div className={`w-full py-3 px-4 rounded-2xl text-center font-medium transition-colors border shadow-lg mb-4 sm:mb-8 shrink-0
               ${appState === 'WAKE_WORD' ? 'bg-blue-900/20 text-blue-400 border-blue-500/20' : ''}
               ${appState === 'COMMAND' ? 'bg-emerald-900/20 text-emerald-400 border-emerald-500/20' : ''}
               ${appState === 'PROCESSING' ? 'bg-purple-900/20 text-purple-400 border-purple-500/20' : ''}
@@ -487,17 +491,17 @@
             </div>
 
             {/* Main Orb / Visualizer */}
-            <div className="relative flex justify-center items-center h-48 mb-8 flex-shrink-0">
+            <div className="relative flex justify-center items-center h-40 sm:h-48 mb-4 sm:mb-8 shrink-0">
               {appState !== 'IDLE' && (
-                <div className={`absolute w-40 h-40 rounded-full ${getStateColor()} opacity-20 animate-ping`}></div>
+                <div className={`absolute w-36 h-36 sm:w-40 sm:h-40 rounded-full ${getStateColor()} opacity-20 animate-ping`}></div>
               )}
               {(appState === 'COMMAND' || appState === 'SPEAKING') && (
-                 <div className={`absolute w-32 h-32 rounded-full ${getStateColor()} opacity-30 animate-pulse delay-75`}></div>
+                 <div className={`absolute w-28 h-28 sm:w-32 sm:h-32 rounded-full ${getStateColor()} opacity-30 animate-pulse delay-75`}></div>
               )}
               
               <button 
                 onClick={toggleSystem}
-                className={`relative z-10 w-28 h-28 rounded-full flex flex-col items-center justify-center transition-all duration-300 shadow-2xl hover:scale-105 ${getStateColor()} ${appState !== 'IDLE' ? 'shadow-[0_0_30px_rgba(0,0,0,0.5)]' : ''}`}
+                className={`relative z-10 w-24 h-24 sm:w-28 sm:h-28 rounded-full flex flex-col items-center justify-center transition-all duration-300 shadow-2xl hover:scale-105 ${getStateColor()} ${appState !== 'IDLE' ? 'shadow-[0_0_30px_rgba(0,0,0,0.5)]' : ''}`}
                 style={{ boxShadow: appState !== 'IDLE' ? `0 0 40px var(--tw-shadow-color)` : '' }}
               >
                 {getStateIcon()}
@@ -505,15 +509,15 @@
             </div>
 
             {/* Live Transcript */}
-            <div className="w-full transition-opacity duration-300 mb-4" style={{ opacity: (appState === 'COMMAND' || appState === 'WAKE_WORD') ? 1 : 0.2 }}>
+            <div className="w-full transition-opacity duration-300 mb-4 shrink-0" style={{ opacity: (appState === 'COMMAND' || appState === 'WAKE_WORD') ? 1 : 0.2 }}>
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 min-h-[60px] text-slate-300 flex items-center justify-center italic text-center text-sm shadow-inner">
                 {transcript || (appState === 'WAKE_WORD' ? `等待唤醒词: ${settings.language === 'zh-HK' ? '小豬' : '小G'}` : "...")}
               </div>
             </div>
 
             {/* Chat History */}
-            <div className="w-full flex-1 bg-slate-900/50 border border-slate-800 rounded-3xl overflow-hidden flex flex-col">
-              <div className="bg-slate-900/80 p-3 border-b border-slate-800 flex items-center gap-2 backdrop-blur-md">
+            <div className="w-full flex-1 bg-slate-900/50 border border-slate-800 rounded-3xl overflow-hidden flex flex-col min-h-[150px]">
+              <div className="bg-slate-900/80 p-3 border-b border-slate-800 flex items-center gap-2 backdrop-blur-md shrink-0">
                 <Icon name="message-square" size={16} className="text-teal-500"/>
                 <span className="font-bold text-xs tracking-wider uppercase text-slate-400">Interaction History</span>
               </div>
@@ -542,17 +546,17 @@
           {/* --- Settings Modal --- */}
           {showSettings && (
             <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade">
-              <div className="bg-slate-900 border border-slate-800 rounded-[2rem] shadow-2xl w-full max-w-md p-6 animate-scale-in">
-                <div className="flex justify-between items-center mb-6">
+              <div className="bg-slate-900 border border-slate-800 rounded-[2rem] shadow-2xl w-full max-w-md p-5 sm:p-6 animate-scale-in">
+                <div className="flex justify-between items-center mb-5 sm:mb-6">
                   <h2 className="text-xl font-bold text-white flex items-center gap-2">
                     <Icon name="settings" size={20} className="text-teal-400" /> 系统设置
                   </h2>
-                  <button onClick={() => setShowSettings(false)} className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 text-slate-400">
+                  <button onClick={() => setShowSettings(false)} className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 text-slate-400 shrink-0">
                     <Icon name="x" size={18}/>
                   </button>
                 </div>
                 
-                <div className="space-y-4 max-h-[70vh] overflow-y-auto no-scrollbar pb-4">
+                <div className="space-y-4 max-h-[75vh] overflow-y-auto no-scrollbar pb-4">
                   
                   {/* AI Model Selection */}
                   <div className="space-y-2">
@@ -560,14 +564,14 @@
                     <div className="grid grid-cols-2 gap-2">
                       <button 
                         onClick={() => updateSetting('model', 'deepseek')}
-                        className={`py-3 px-4 rounded-xl text-sm font-bold transition-all border ${settings.model === 'deepseek' ? 'bg-teal-900/40 border-teal-500 text-teal-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
+                        className={`py-3 px-3 sm:px-4 rounded-xl text-sm font-bold transition-all border ${settings.model === 'deepseek' ? 'bg-teal-900/40 border-teal-500 text-teal-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
                       >
                         DeepSeek V3
                         <span className="block text-[10px] font-normal opacity-70 mt-1">内置免费 Key</span>
                       </button>
                       <button 
                         onClick={() => updateSetting('model', 'gemini')}
-                        className={`py-3 px-4 rounded-xl text-sm font-bold transition-all border ${settings.model === 'gemini' ? 'bg-blue-900/40 border-blue-500 text-blue-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
+                        className={`py-3 px-3 sm:px-4 rounded-xl text-sm font-bold transition-all border ${settings.model === 'gemini' ? 'bg-blue-900/40 border-blue-500 text-blue-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}
                       >
                         Gemini 3 Flash
                         <span className="block text-[10px] font-normal opacity-70 mt-1">需自行提供 Key</span>
@@ -592,37 +596,37 @@
                   <hr className="border-slate-800" />
 
                   {/* Language Selection */}
-                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3 text-slate-300">
-                      <div className="p-2 bg-slate-800 rounded-lg text-indigo-400"><Icon name="globe" size={18} /></div>
-                      <div>
-                        <div className="text-sm font-bold text-white">Language / 语言</div>
-                        <div className="text-[10px] text-slate-500">影响唤醒词与发音引擎</div>
+                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-4 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-3 text-slate-300 min-w-0">
+                      <div className="p-2 bg-slate-800 rounded-lg text-indigo-400 shrink-0"><Icon name="globe" size={18} /></div>
+                      <div className="truncate">
+                        <div className="text-sm font-bold text-white truncate">Language / 语言</div>
+                        <div className="text-[10px] text-slate-500 truncate">影响唤醒词与发音引擎</div>
                       </div>
                     </div>
                     <select 
                       value={settings.language}
                       onChange={(e) => updateSetting('language', e.target.value)}
-                      className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-teal-500 cursor-pointer"
+                      className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 text-xs sm:text-sm text-white focus:outline-none focus:border-teal-500 cursor-pointer shrink-0"
                     >
                       <option value="zh-CN">普通话</option>
-                      <option value="zh-HK">粤语 (Cantonese)</option>
+                      <option value="zh-HK">粤语</option>
                     </select>
                   </div>
 
                   {/* Voice Selection */}
-                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3 text-slate-300">
-                      <div className="p-2 bg-slate-800 rounded-lg text-pink-400"><Icon name="mic" size={18} /></div>
-                      <div>
-                        <div className="text-sm font-bold text-white">Voice / 声音引擎</div>
-                        <div className="text-[10px] text-slate-500">{availableVoices.length > 0 ? `已找到 ${availableVoices.length} 个声音` : '加载中...'}</div>
+                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-4 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-3 text-slate-300 min-w-0">
+                      <div className="p-2 bg-slate-800 rounded-lg text-pink-400 shrink-0"><Icon name="mic" size={18} /></div>
+                      <div className="truncate">
+                        <div className="text-sm font-bold text-white truncate">Voice / 声音引擎</div>
+                        <div className="text-[10px] text-slate-500 truncate">{availableVoices.length > 0 ? `已找到 ${availableVoices.length} 个` : '加载中...'}</div>
                       </div>
                     </div>
                     <select 
                       value={settings.voiceURI || ''}
                       onChange={(e) => updateSetting('voiceURI', e.target.value)}
-                      className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-pink-500 cursor-pointer max-w-[130px] truncate"
+                      className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-pink-500 cursor-pointer w-[120px] sm:w-[130px] shrink-0"
                     >
                       {availableVoices.map(v => (
                         <option key={v.voiceURI} value={v.voiceURI}>{v.name}</option>
@@ -632,19 +636,19 @@
                   </div>
 
                   {/* ESP32 IP Configuration */}
-                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3 text-slate-300">
-                      <div className="p-2 bg-slate-800 rounded-lg text-emerald-400"><Icon name="wifi" size={18} /></div>
-                      <div>
-                        <div className="text-sm font-bold text-white">ESP32 Device IP</div>
-                        <div className="text-[10px] text-slate-500">用于“开灯/关灯”指令</div>
+                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-4 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-3 text-slate-300 min-w-0">
+                      <div className="p-2 bg-slate-800 rounded-lg text-emerald-400 shrink-0"><Icon name="wifi" size={18} /></div>
+                      <div className="truncate">
+                        <div className="text-sm font-bold text-white truncate">ESP32 Device IP</div>
+                        <div className="text-[10px] text-slate-500 truncate">用于“开灯/关灯”指令</div>
                       </div>
                     </div>
                     <input 
                       type="text" 
                       value={settings.esp32Ip}
                       onChange={(e) => updateSetting('esp32Ip', e.target.value)}
-                      className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white w-32 focus:outline-none focus:border-emerald-500 text-center"
+                      className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 text-xs sm:text-sm text-white w-[100px] sm:w-[120px] focus:outline-none focus:border-emerald-500 text-center shrink-0"
                       placeholder="192.168.x.x"
                     />
                   </div>
@@ -652,16 +656,16 @@
                   {/* Auto-Sleep Toggle */}
                   <button 
                     onClick={() => updateSetting('autoSleep', !settings.autoSleep)}
-                    className="w-full bg-slate-800/50 border border-slate-700/50 rounded-2xl p-4 flex items-center justify-between hover:bg-slate-800 transition-colors"
+                    className="w-full bg-slate-800/50 border border-slate-700/50 rounded-2xl p-4 flex items-center justify-between hover:bg-slate-800 transition-colors gap-2"
                   >
-                    <div className="flex items-center gap-3 text-slate-300">
-                      <div className="p-2 bg-slate-800 rounded-lg text-amber-400"><Icon name="moon" size={18} /></div>
-                      <div className="text-left">
-                        <div className="text-sm font-bold text-white">Auto-Sleep / 自动休眠</div>
-                        <div className="text-[10px] text-slate-500">10秒无声自动进入待唤醒状态</div>
+                    <div className="flex items-center gap-3 text-slate-300 min-w-0">
+                      <div className="p-2 bg-slate-800 rounded-lg text-amber-400 shrink-0"><Icon name="moon" size={18} /></div>
+                      <div className="text-left truncate">
+                        <div className="text-sm font-bold text-white truncate">Auto-Sleep / 自动休眠</div>
+                        <div className="text-[10px] text-slate-500 truncate">10秒无声自动进入待唤醒状态</div>
                       </div>
                     </div>
-                    <div className={`w-10 h-6 rounded-full relative transition-colors ${settings.autoSleep ? 'bg-teal-500' : 'bg-slate-700'}`}>
+                    <div className={`w-10 h-6 rounded-full relative transition-colors shrink-0 ${settings.autoSleep ? 'bg-teal-500' : 'bg-slate-700'}`}>
                       <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${settings.autoSleep ? 'translate-x-4' : 'translate-x-0'}`}></div>
                     </div>
                   </button>
